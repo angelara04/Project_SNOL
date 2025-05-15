@@ -1,219 +1,204 @@
 import re
 import sys
 
-variables = {}  # Store var_name: (value, type_str) where type_str is "int" or "float"
+# Global symbol table: var_name -> (value, type_str)
+variables = {}
 
-# Utility functions
+# Token specification
+TOKEN_SPEC = [
+    ('EXIT',    r'EXIT'),                # exit keyword
+    ('BEG',     r'BEG'),                 # input keyword
+    ('PRINT',   r'PRINT'),               # print keyword
+    ('FLOAT',   r'-?\d+\.\d+'),          # floating-point literal
+    ('INT',     r'-?\d+'),               # integer literal
+    ('IDENT',   r'[A-Za-z][A-Za-z0-9]*'),# identifier
+    ('OP',      r'[+\-*/%]'),            # arithmetic operators
+    ('EQ',      r'='),                   # assignment operator
+    ('SKIP',    r'[ \t]+'),              # skip spaces/tabs
+    ('MISMATCH',r'.'),                   # any other character
+]
 
-def is_valid_var_name(name):
-    keywords = {"BEG", "PRINT", "EXIT!"}
-    if name in keywords:
-        return False
-    return re.fullmatch(r'[A-Za-z][A-Za-z0-9]*', name) is not None
+# Compile combined regex
+tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in TOKEN_SPEC)
+master_pat = re.compile(tok_regex)
 
-def is_integer_literal(s):
-    return re.fullmatch(r'-?\d+', s) is not None
+def print_error(msg):
+    print(f"SNOL> Error! {msg}")
 
-def is_float_literal(s):
-    return re.fullmatch(r'-?\d+\.\d+', s) is not None
-
-def get_literal_type(s):
-    if is_integer_literal(s):
-        return "int"
-    elif is_float_literal(s):
-        return "float"
-    else:
-        return None
-
-def print_error(message):
-    print(f"SNOL> Error! {message}")
-
-def prompt_input(var):
-    print(f"SNOL> Please enter value for [{var}]")
-    val = input("Input: ").strip()
-    t = get_literal_type(val)
-    if t is None:
-        print_error("Invalid number format!")
-        return None, None
-    if t == "int":
-        return int(val), "int"
-    else:
-        return float(val), "float"
-
-# Expression evaluation
-def tokenize_expr(expr):
-    token_spec = [
-        ('FLOAT', r'-?\d+\.\d+'),
-        ('INT', r'-?\d+'),
-        ('VAR', r'[A-Za-z][A-Za-z0-9]*'),
-        ('OP', r'[\+\-\*/%]'),
-        ('SKIP', r'[ \t]+'),
-        ('MISMATCH', r'.'),
-    ]
-    tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_spec)
+def tokenize(line):
     tokens = []
-    for mo in re.finditer(tok_regex, expr):
+    pos = 0
+    while pos < len(line):
+        # At start of line, allow BEGvar or PRINTnum without space
+        if pos == 0:
+            m = re.match(r'BEG([A-Za-z][A-Za-z0-9]*)', line[pos:])
+            if m:
+                tokens.append(('BEG','BEG'))
+                tokens.append(('IDENT', m.group(1)))
+                pos += m.end()
+                continue
+            m2 = re.match(r'PRINT([A-Za-z][A-Za-z0-9]*)', line[pos:])
+            if m2:
+                tokens.append(('PRINT','PRINT'))
+                tokens.append(('IDENT', m2.group(1)))
+                pos += m2.end()
+                continue
+
+        mo = master_pat.match(line, pos)
+        if not mo:
+            raise ValueError(f"Unknown word at position {pos}")
         kind = mo.lastgroup
-        value = mo.group()
+        text = mo.group()
+        pos = mo.end()
         if kind == 'SKIP':
             continue
-        elif kind == 'MISMATCH':
-            return None, f"Unknown word [{value}]"
-        tokens.append((kind, value))
-    return tokens, None
+        if kind == 'MISMATCH':
+            raise ValueError(f"Unknown word [{text}]")
+        tokens.append((kind, text))
+    return tokens
 
-def check_defined_vars(tokens):
-    for kind, value in tokens:
-        if kind == 'VAR' and value not in variables:
-            return value
+def get_literal_type(text):
+    if re.fullmatch(r'-?\d+', text):
+        return 'int'
+    if re.fullmatch(r'-?\d+\.\d+', text):
+        return 'float'
     return None
 
-def evaluate_expr(expr):
-    tokens, err = tokenize_expr(expr)
-    if err:
-        return None, None, err
-    undef = check_defined_vars(tokens)
-    if undef:
-        return None, None, f"Undefined variable [{undef}]"
+def check_defined(tokens):
+    for k, t in tokens:
+        if k == 'IDENT' and t not in variables:
+            raise NameError(f"Undefined variable [{t}]")
 
-    expr_py = ""
-    values_types = []
-    for kind, val in tokens:
-        if kind == 'VAR':
-            val_val, val_type = variables[val]
-            expr_py += str(val_val)
-            values_types.append(val_type)
-        elif kind == 'INT':
-            expr_py += val
-            values_types.append("int")
-        elif kind == 'FLOAT':
-            expr_py += val
-            values_types.append("float")
-        elif kind == 'OP':
-            expr_py += val
-
-    # Check all operands have the same type
-    if values_types:
-        base_type = values_types[0]
-        if any(t != base_type for t in values_types):
-            return None, None, "Operands must be of the same type in an arithmetic operation!"
-    else:
-        base_type = None
-
-    # If modulo used, ensure int operands
-    if '%' in expr_py and base_type != "int":
-        return None, None, "Modulo operation only allowed on integer operands!"
-
+def evaluate_expr(tokens):
+    # 1) Undefined variables
+    check_defined(tokens)
+    # 2) Double-ops
+    for i in range(len(tokens)-1):
+        if tokens[i][0]=='OP' and tokens[i+1][0]=='OP':
+            raise SyntaxError(f"Invalid sequence of operators [{tokens[i][1]}{tokens[i+1][1]}]")
+    # 3) Tokens between literals
+    lit_idxs = [i for i,(k,_) in enumerate(tokens) if k in ('INT','FLOAT')]
+    for i in range(len(lit_idxs)-1):
+        a, b = lit_idxs[i], lit_idxs[i+1]
+        if b - a > 1:
+            for j in range(a+1, b):
+                if tokens[j][0] not in ('INT','FLOAT'):
+                    raise SyntaxError("Tokens between literals are not allowed")
+    # Build expr string & type-check
+    expr, types = '', []
+    for k,t in tokens:
+        if k=='IDENT':
+            val,typ = variables[t]
+            expr += str(val); types.append(typ)
+        elif k in ('INT','FLOAT'):
+            expr += t; types.append('int' if k=='INT' else 'float')
+        elif k=='OP':
+            expr += t
+    if types:
+        base = types[0]
+        if any(x!=base for x in types):
+            raise TypeError("Operands must be of the same type in an arithmetic operation!")
+        if '%' in expr and base!='int':
+            raise TypeError("Modulo operation only allowed on integer operands!")
+    # Evaluate to force syntax errors, but we discard result
     try:
-        result = eval(expr_py)
-        # If operands are int and no division/modulo, keep int type
-        if base_type == "int" and all(op not in expr_py for op in ['/', '%']):
-            result = int(result)
-            base_type = "int"
-        else:
-            # Division or float operands yield float
-            result = float(result)
-            base_type = "float"
+        _ = eval(expr)
     except Exception:
-        return None, None, "Invalid arithmetic expression!"
+        raise SyntaxError("Invalid arithmetic expression!")
+    return
 
-    return result, base_type, None
-
-def handle_assignment(input_str):
-    if '=' not in input_str:
-        print_error("Invalid assignment syntax!")
-        return
-    var, expr = input_str.split('=', 1)
-    var = var.strip()
-    expr = expr.strip()
-
-    if not is_valid_var_name(var):
+def handle_assignment(tokens):
+    var = tokens[0][1]
+    if re.fullmatch(r'[A-Za-z][A-Za-z0-9]*', var) is None:
         print_error(f"Invalid variable name: [{var}]")
         return
+    expr_toks = tokens[2:]
+    try:
+        # We re-evaluate here to get the value and type
+        check_defined(expr_toks)
+        # simple reuse: build expr and eval
+        expr, types = '', []
+        for k,t in expr_toks:
+            if k=='IDENT':
+                v,ty = variables[t]; expr+=str(v); types.append(ty)
+            elif k in ('INT','FLOAT'):
+                expr+=t; types.append('int' if k=='INT' else 'float')
+            else: expr+=t
+        val = eval(expr)
+        typ = 'int' if all(op not in expr for op in ('/', '%')) and isinstance(val,int) else 'float'
+    except Exception as e:
+        print_error(str(e)); return
 
-    val, val_type, err = evaluate_expr(expr)
-    if err:
-        print_error(err)
-        return
-
-    variables[var] = (val, val_type)
+    variables[var] = (val, typ)
     print(f"SNOL> [{var}] = {val}")
 
-def handle_print(arg):
-    arg = arg.strip()
-    if is_valid_var_name(arg):
+def handle_print(tokens):
+    if len(tokens)<2:
+        print_error("PRINT requires an argument"); return
+    arg = tokens[1][1]
+    if re.fullmatch(r'[A-Za-z][A-Za-z0-9]*', arg):
         if arg not in variables:
-            print_error(f"Undefined variable [{arg}]")
-            return
-        val, _ = variables[arg]
-        print(f"SNOL> [{arg}] = {val}")
-        return
-    elif get_literal_type(arg) is not None:
-        print(f"SNOL> {arg}")
-        return
+            print_error(f"Undefined variable [{arg}]"); return
+        v,_ = variables[arg]
+        print(f"SNOL> [{arg}] = {v}")
     else:
-        print_error(f"Undefined variable or invalid literal: [{arg}]")
+        lit_ty = get_literal_type(arg)
+        if not lit_ty:
+            print_error(f"Undefined variable or invalid literal: [{arg}]")
+        else:
+            print(f"SNOL> {arg}")
 
-def handle_beg(var):
-    var = var.strip()
-    if not is_valid_var_name(var):
-        print_error(f"Invalid variable name: [{var}]")
-        return
+def handle_beg(tokens):
+    if len(tokens)<2 or tokens[1][0]!='IDENT':
+        print_error("BEG requires a variable name"); return
+    var = tokens[1][1]
+    if not re.fullmatch(r'[A-Za-z][A-Za-z0-9]*', var):
+        print_error(f"Invalid variable name: [{var}]"); return
+    print(f"SNOL> Please enter value for [{var}]")
+    inp = input("Input: ").strip()
+    lt = get_literal_type(inp)
+    if lt is None:
+        print_error("Invalid number format!"); return
+    val = int(inp) if lt=='int' else float(inp)
+    variables[var] = (val, lt)
 
-    val, val_type = prompt_input(var)
-    if val_type is None:
-        return
-    variables[var] = (val, val_type)
+def process(tokens):
+    if not tokens:
+        return True
+    k0, _ = tokens[0]
 
-def process_command(command):
-    command = command.strip()
-    if not command:
+    if k0=='EXIT':
+        print("Interpreter is now terminated..."); return False
+    if k0=='BEG'   and len(tokens)==2 and tokens[1][0]=='IDENT':
+        handle_beg(tokens);   return True
+    if k0=='PRINT' and len(tokens)==2:
+        handle_print(tokens); return True
+    if k0=='IDENT' and len(tokens)>=3 and tokens[1][0]=='EQ':
+        handle_assignment(tokens); return True
+
+    # standalone literal or var → ignore silently
+    if (k0 in ('INT','FLOAT') and len(tokens)==1) or (k0=='IDENT' and len(tokens)==1):
         return True
 
-    if command.upper() in ["EXIT", "EXIT!"]:
-        print("Interpreter is now terminated...")
-        return False
-
-    if command.startswith("BEG"):
-        parts = command.split(maxsplit=1)
-        if len(parts) != 2:
-            print_error("Unknown command!")
-            return True
-        handle_beg(parts[1])
-        return True
-
-    if command.startswith("PRINT"):
-        parts = command.split(maxsplit=1)
-        if len(parts) != 2:
-            print_error("Missing argument after PRINT")
-            return True
-        handle_print(parts[1])
-        return True
-
-    if '=' in command:
-        handle_assignment(command)
-        return True
-
-    if is_valid_var_name(command):
-        if command not in variables:
-            print_error(f"Undefined variable [{command}]")
-        return True
-
-    if get_literal_type(command) is not None:
-        return True
-
-    print_error("Unknown command!")
+    # otherwise treat as expression → check for syntax errors
+    try:
+        evaluate_expr(tokens)
+    except Exception as e:
+        print_error(str(e))
     return True
 
 def main():
     print("The SNOL environment is now active, you may proceed with giving your commands.")
     while True:
         try:
-            cmd = input("Command: ")
+            line = input("Command: ")
         except EOFError:
             break
-        cont = process_command(cmd)
-        if not cont:
+        try:
+            toks = tokenize(line)
+        except ValueError as ve:
+            print_error(str(ve)); continue
+        if not process(toks):
             break
 
 if __name__ == "__main__":
