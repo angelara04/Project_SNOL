@@ -1,125 +1,220 @@
 import re
+import sys
 
-MAX = 100
-variables = {}
+variables = {}  # Store var_name: (value, type_str) where type_str is "int" or "float"
 
-# Trim leading and trailing whitespace
-def trim_whitespace(s):
-    return s.strip()
+# Utility functions
 
-# Print error messages
-def print_error(message):
-    print(f"SNOL ERROR: {message}")
+def is_valid_var_name(name):
+    keywords = {"BEG", "PRINT", "EXIT!"}
+    if name in keywords:
+        return False
+    return re.fullmatch(r'[A-Za-z][A-Za-z0-9]*', name) is not None
 
-# Check if input has assignment
-def is_assignment(input_str):
-    return '=' in input_str
+def is_integer_literal(s):
+    return re.fullmatch(r'-?\d+', s) is not None
 
-# Command parser and dispatcher
-def parse_command(input_str):
-    input_str = input_str.strip()
+def is_float_literal(s):
+    return re.fullmatch(r'-?\d+\.\d+', s) is not None
 
-    if is_assignment(input_str):
-        handle_assignment_command(input_str)
-        return 1
-
-    if input_str == "EXIT!":
-        return -1
-
-    if input_str.startswith("PRINT"):
-        arg = input_str[5:].strip()
-        if not arg:
-            print_error("Missing argument after PRINT")
-            return 0
-        handle_print_command(arg)
-        return 1
-
-    if input_str.startswith("BEG"):
-        arg = input_str[3:].strip()
-        if not arg:
-            print_error("Missing variable name after BEG")
-            return 0
-        handle_beg_command(arg)
-        return 1
-
-    return 0  # Unknown command
-
-# Handler for PRINT
-def handle_print_command(var):
-    print(f"PRINT called with variable/literal: {var}")
-    if var in variables:
-        print(f"{var} = {variables[var]}")
+def get_literal_type(s):
+    if is_integer_literal(s):
+        return "int"
+    elif is_float_literal(s):
+        return "float"
     else:
-        try:
-            # Try to interpret as a number
-            print(float(var))
-        except ValueError:
-            print_error(f"Undefined variable or invalid literal: {var}")
+        return None
 
-# Handler for BEG
-def handle_beg_command(var):
-    if not var.isidentifier():
-        print_error(f"Invalid variable name: {var}")
+def print_error(message):
+    print(f"SNOL> Error! {message}")
+
+def prompt_input(var):
+    print(f"SNOL> Please enter value for [{var}]")
+    val = input("Input: ").strip()
+    t = get_literal_type(val)
+    if t is None:
+        print_error("Invalid number format!")
+        return None, None
+    if t == "int":
+        return int(val), "int"
+    else:
+        return float(val), "float"
+
+# Expression evaluation
+def tokenize_expr(expr):
+    token_spec = [
+        ('FLOAT', r'-?\d+\.\d+'),
+        ('INT', r'-?\d+'),
+        ('VAR', r'[A-Za-z][A-Za-z0-9]*'),
+        ('OP', r'[\+\-\*/%]'),
+        ('SKIP', r'[ \t]+'),
+        ('MISMATCH', r'.'),
+    ]
+    tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_spec)
+    tokens = []
+    for mo in re.finditer(tok_regex, expr):
+        kind = mo.lastgroup
+        value = mo.group()
+        if kind == 'SKIP':
+            continue
+        elif kind == 'MISMATCH':
+            return None, f"Unknown word [{value}]"
+        tokens.append((kind, value))
+    return tokens, None
+
+def check_defined_vars(tokens):
+    for kind, value in tokens:
+        if kind == 'VAR' and value not in variables:
+            return value
+    return None
+
+def evaluate_expr(expr):
+    tokens, err = tokenize_expr(expr)
+    if err:
+        return None, None, err
+    undef = check_defined_vars(tokens)
+    if undef:
+        return None, None, f"Undefined variable [{undef}]"
+
+    expr_py = ""
+    values_types = []
+    for kind, val in tokens:
+        if kind == 'VAR':
+            val_val, val_type = variables[val]
+            expr_py += str(val_val)
+            values_types.append(val_type)
+        elif kind == 'INT':
+            expr_py += val
+            values_types.append("int")
+        elif kind == 'FLOAT':
+            expr_py += val
+            values_types.append("float")
+        elif kind == 'OP':
+            expr_py += val
+
+    # Check all operands have the same type
+    if values_types:
+        base_type = values_types[0]
+        if any(t != base_type for t in values_types):
+            return None, None, "Operands must be of the same type in an arithmetic operation!"
+    else:
+        base_type = None
+
+    # If modulo used, ensure int operands
+    if '%' in expr_py and base_type != "int":
+        return None, None, "Modulo operation only allowed on integer operands!"
+
+    try:
+        result = eval(expr_py)
+        # If operands are int and no division/modulo, keep int type
+        if base_type == "int" and all(op not in expr_py for op in ['/', '%']):
+            result = int(result)
+            base_type = "int"
+        else:
+            # Division or float operands yield float
+            result = float(result)
+            base_type = "float"
+    except Exception:
+        return None, None, "Invalid arithmetic expression!"
+
+    return result, base_type, None
+
+def handle_assignment(input_str):
+    if '=' not in input_str:
+        print_error("Invalid assignment syntax!")
         return
-    value = input(f"Enter value for {var}: ").strip()
-    try:
-        variables[var] = float(value)
-        print(f"Variable {var} initialized with value {value}")
-    except ValueError:
-        print_error("Invalid value, please enter a number")
+    var, expr = input_str.split('=', 1)
+    var = var.strip()
+    expr = expr.strip()
 
-# Handler for assignment
-def handle_assignment_command(input_str):
-    print(f"ASSIGNMENT detected: {input_str}")
-    try:
-        var, expr = input_str.split('=', 1)
-        var = var.strip()
-        expr = expr.strip()
+    if not is_valid_var_name(var):
+        print_error(f"Invalid variable name: [{var}]")
+        return
 
-        if not var.isidentifier():
-            print_error(f"Invalid variable name: {var}")
+    val, val_type, err = evaluate_expr(expr)
+    if err:
+        print_error(err)
+        return
+
+    variables[var] = (val, val_type)
+    print(f"SNOL> [{var}] = {val}")
+
+def handle_print(arg):
+    arg = arg.strip()
+    if is_valid_var_name(arg):
+        if arg not in variables:
+            print_error(f"Undefined variable [{arg}]")
             return
+        val, _ = variables[arg]
+        print(f"SNOL> [{arg}] = {val}")
+        return
+    elif get_literal_type(arg) is not None:
+        print(f"SNOL> {arg}")
+        return
+    else:
+        print_error(f"Undefined variable or invalid literal: [{arg}]")
 
-        # Replace variable names in the expression with their values
-        tokens = re.findall(r'[A-Za-z_]\w*|\d+\.?\d*|[+\-*/()]', expr)
-        evaluated_expr = ''
-        for token in tokens:
-            if token.isidentifier():
-                if token in variables:
-                    evaluated_expr += str(variables[token])
-                else:
-                    print_error(f"Undefined variable: {token}")
-                    return
-            else:
-                evaluated_expr += token
+def handle_beg(var):
+    var = var.strip()
+    if not is_valid_var_name(var):
+        print_error(f"Invalid variable name: [{var}]")
+        return
 
-        value = eval(evaluated_expr)
-        variables[var] = value
-        print(f"{var} = {value}")
+    val, val_type = prompt_input(var)
+    if val_type is None:
+        return
+    variables[var] = (val, val_type)
 
-    except Exception as e:
-        print_error(f"Assignment error: {e}")
+def process_command(command):
+    command = command.strip()
+    if not command:
+        return True
 
-# Main interpreter loop
+    if command.upper() in ["EXIT", "EXIT!"]:
+        print("Interpreter is now terminated...")
+        return False
+
+    if command.startswith("BEG"):
+        parts = command.split(maxsplit=1)
+        if len(parts) != 2:
+            print_error("Unknown command!")
+            return True
+        handle_beg(parts[1])
+        return True
+
+    if command.startswith("PRINT"):
+        parts = command.split(maxsplit=1)
+        if len(parts) != 2:
+            print_error("Missing argument after PRINT")
+            return True
+        handle_print(parts[1])
+        return True
+
+    if '=' in command:
+        handle_assignment(command)
+        return True
+
+    if is_valid_var_name(command):
+        if command not in variables:
+            print_error(f"Undefined variable [{command}]")
+        return True
+
+    if get_literal_type(command) is not None:
+        return True
+
+    print_error("Unknown command!")
+    return True
+
 def main():
     print("The SNOL environment is now active, you may proceed with giving your commands.")
-
     while True:
         try:
-            input_str = input("Command: ")[:MAX]
+            cmd = input("Command: ")
         except EOFError:
             break
-
-        input_str = trim_whitespace(input_str)
-        if not input_str:
-            continue
-
-        result = parse_command(input_str)
-        if result == -1:
-            print("Exiting SNOL interpreter...")
+        cont = process_command(cmd)
+        if not cont:
             break
-        elif result == 0:
-            print_error("Invalid or unknown command")
 
 if __name__ == "__main__":
     main()
