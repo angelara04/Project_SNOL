@@ -154,16 +154,37 @@ def handle_print(arg):
     else:
         print_error(f"Undefined variable or invalid literal: [{arg}]")
 
+# BEG Functions
 def handle_beg(var):
     var = var.strip()
     if not is_valid_var_name(var):
         print_error(f"Invalid variable name: [{var}]")
         return
+    print(f"SNOL> Please enter value for [{var}]")
 
-    val, val_type = prompt_input(var)
-    if val_type is None:
-        return
-    variables[var] = (val, val_type)
+    try:
+        value = input("Input: ").strip()
+        val_type = get_literal_type(value)
+        if val_type is None:
+            print_error(f"Invalid number format for [{var}]!")
+            return
+
+        # Store the value in variables dictionary
+        if val_type == "int":
+            variables[var] = (int(value), "int")
+        else:
+            variables[var] = (float(value), "float")
+
+    except Exception as e:
+        print(f"SNOL> Error! {str(e)}")
+
+# Helper functions for BEG Command
+def is_valid_number(s):
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
 
 def process_command(command):
     command = command.strip()
