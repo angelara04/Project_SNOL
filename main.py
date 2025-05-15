@@ -1,10 +1,29 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# Program Description:
+
+#     • Name and student number of the program developers
+#         – Angel Grace P. Arapoc   2023‑01741
+#         – Richelle De Arce        2023‑15674
+#         – Maron Christofer E. Morgia 2023‑60114
+#         – Yldevier John A. Magpusao   2023‑60173
+#     • Dates covered for the program development: May 11 - May 16
+#
+#   Workload breakdown:
+#     • Angel: REPL loop & tokenizer design
+#     • Richelle: BEG/PRINT commands & I/O handling 
+#     • Maron: expression evaluator & error checking
+#     • Yldevier: project write‑up & overall integration
+#
+
 import re
 import sys
 
 # Global symbol table: var_name -> (value, type_str)
 variables = {}
 
-# Token specification
+# TOKEN_SPEC defines all token types and their regex patterns for SNOL
 TOKEN_SPEC = [
     ('EXIT',    r'EXIT'),                # exit keyword
     ('BEG',     r'BEG'),                 # input keyword
@@ -18,13 +37,16 @@ TOKEN_SPEC = [
     ('MISMATCH',r'.'),                   # any other character
 ]
 
-# Compile combined regex
+# Compile the combined regex pattern from TOKEN_SPEC
 tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in TOKEN_SPEC)
 master_pat = re.compile(tok_regex)
 
+# print_error: outputs error messages consistently prefixed with 'SNOL>'
 def print_error(msg):
     print(f"SNOL> Error! {msg}")
 
+# tokenize: splits a line of input into tokens based on TOKEN_SPEC
+# supports shorthand BEGvar and PRINTvar at start-of-line
 def tokenize(line):
     tokens = []
     pos = 0
@@ -57,6 +79,7 @@ def tokenize(line):
         tokens.append((kind, text))
     return tokens
 
+# get_literal_type: identifies if a text is an INT or FLOAT literal, else None
 def get_literal_type(text):
     if re.fullmatch(r'-?\d+', text):
         return 'int'
@@ -64,11 +87,16 @@ def get_literal_type(text):
         return 'float'
     return None
 
+# check_defined: ensures all IDENT tokens refer to defined variables
+# raises NameError for any undefined identifier
 def check_defined(tokens):
     for k, t in tokens:
         if k == 'IDENT' and t not in variables:
             raise NameError(f"Undefined variable [{t}]")
 
+# evaluate_expr: syntax & type checks on arithmetic expressions
+# checks undefined vars, double-ops, tokens between literals, type consistency
+# uses eval() to catch invalid syntax but discards the result
 def evaluate_expr(tokens):
     # 1) Undefined variables
     check_defined(tokens)
@@ -106,7 +134,8 @@ def evaluate_expr(tokens):
     except Exception:
         raise SyntaxError("Invalid arithmetic expression!")
     return
-
+# handle_assignment: processes "var = expr" statements
+# evaluates expr, updates variables dict, prints the new value
 def handle_assignment(tokens):
     var = tokens[0][1]
     if re.fullmatch(r'[A-Za-z][A-Za-z0-9]*', var) is None:
@@ -132,6 +161,8 @@ def handle_assignment(tokens):
     variables[var] = (val, typ)
     print(f"SNOL> [{var}] = {val}")
 
+# handle_print: processes "PRINT x" commands
+# if x is a variable, prints its value; if a literal, echoes it
 def handle_print(tokens):
     if len(tokens)<2:
         print_error("PRINT requires an argument"); return
@@ -147,7 +178,8 @@ def handle_print(tokens):
             print_error(f"Undefined variable or invalid literal: [{arg}]")
         else:
             print(f"SNOL> {arg}")
-
+# handle_beg: processes "BEG x" commands
+# prompts user for input, validates number format, stores it
 def handle_beg(tokens):
     if len(tokens)<2 or tokens[1][0]!='IDENT':
         print_error("BEG requires a variable name"); return
@@ -162,6 +194,9 @@ def handle_beg(tokens):
     val = int(inp) if lt=='int' else float(inp)
     variables[var] = (val, lt)
 
+# process: main dispatcher for a single line of tokens
+# routes to exit, beg, print, assignment, or expression-check
+# returns False to break the REPL on EXIT
 def process(tokens):
     if not tokens:
         return True
@@ -187,6 +222,7 @@ def process(tokens):
         print_error(str(e))
     return True
 
+# main: REPL loop, reads lines, tokenizes, processes until EXIT
 def main():
     print("The SNOL environment is now active, you may proceed with giving your commands.")
     while True:
