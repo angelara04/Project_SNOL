@@ -25,7 +25,7 @@ variables = {}
 
 # TOKEN_SPEC defines all token types and their regex patterns for SNOL
 TOKEN_SPEC = [
-    ('EXIT',    r'EXIT'),                # exit keyword
+    ('EXIT',    r'EXIT!'),              # exit keyword
     ('BEG',     r'BEG'),                 # input keyword
     ('PRINT',   r'PRINT'),               # print keyword
     ('FLOAT',   r'-?\d+\.\d+'),          # floating-point literal
@@ -92,7 +92,7 @@ def get_literal_type(text):
 def check_defined(tokens):
     for k, t in tokens:
         if k == 'IDENT' and t not in variables:
-            raise NameError(f"Undefined variable [{t}]")
+            raise NameError(f"Unknown command! Does not match any valid command of the language. ")
 
 # evaluate_expr: syntax & type checks on arithmetic expressions
 # checks undefined vars, double-ops, tokens between literals, type consistency
@@ -123,11 +123,12 @@ def evaluate_expr(tokens):
         elif k=='OP':
             expr += t
     if types:
-        base = types[0]
-        if any(x!=base for x in types):
+        if any(x != types[0] for x in types):
             raise TypeError("Operands must be of the same type in an arithmetic operation!")
-        if '%' in expr and base!='int':
-            raise TypeError("Modulo operation only allowed on integer operands!")
+        if '%' in expr:
+            if any(t != 'int' for t in types):
+                raise TypeError("Modulo operation only allowed on integer operands!")
+
     # Evaluate to force syntax errors, but we discard result
     try:
         _ = eval(expr)
@@ -153,8 +154,16 @@ def handle_assignment(tokens):
             elif k in ('INT','FLOAT'):
                 expr+=t; types.append('int' if k=='INT' else 'float')
             else: expr+=t
+                # Extra type check for modulo usage
+        if any(x != types[0] for x in types):
+            raise TypeError("Operands must be of the same type in an arithmetic operation!")
+
+        if '%' in expr and any(t != 'int' for t in types):
+            raise TypeError("Modulo operation only allowed on integer operands!")
+
         val = eval(expr)
         typ = 'int' if all(op not in expr for op in ('/', '%')) and isinstance(val,int) else 'float'
+
     except Exception as e:
         print_error(str(e)); return
 
