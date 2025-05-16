@@ -41,6 +41,13 @@ TOKEN_SPEC = [
 tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in TOKEN_SPEC)
 master_pat = re.compile(tok_regex)
 
+# format_float: formats float values to 2 decimal places
+def format_float(value):
+    if isinstance(value, float):
+        return ('{0:.8f}'.format(value)).rstrip('0').rstrip('.') if '.' in '{0:.8f}'.format(value) else value
+    return value
+
+
 # print_error: outputs error messages consistently prefixed with 'SNOL>'
 def print_error(msg):
     print(f"SNOL> Error! {msg}")
@@ -168,7 +175,8 @@ def handle_assignment(tokens):
         print_error(str(e)); return
 
     variables[var] = (val, typ)
-    print(f"SNOL> [{var}] = {val}")
+    print(f"SNOL> [{var}] = {format_float(val)}")
+
 
 # handle_print: processes "PRINT x" commands
 # if x is a variable, prints its value; if a literal, echoes it
@@ -180,7 +188,7 @@ def handle_print(tokens):
         if arg not in variables:
             print_error(f"Undefined variable [{arg}]"); return
         v,_ = variables[arg]
-        print(f"SNOL> [{arg}] = {v}")
+        print(f"SNOL> [{arg}] = {format_float(v)}")
     else:
         lit_ty = get_literal_type(arg)
         if not lit_ty:
